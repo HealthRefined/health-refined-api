@@ -1,0 +1,66 @@
+#!/usr/bin/env node
+const cluster = require('cluster')
+const http = require('http')
+const logger = require('./../lib/logger')
+const env = require('./../lib/env')
+let numWorkers = require('os').cpus().length
+
+if (cluster.isMaster) {
+  process.title = 'health-refined-api-master'
+
+  logger.info(`Master cluster setting up ${numWorkers} workers...`)
+
+  cluster
+    .on('online', (worker) => {
+      logger.info(`Worker ${worker.process.pid} is online`)
+    })
+    .on('exit', (worker, code, signal) => {
+      logger.info(`Worker ${worker.process.pid} died with code: ${code} and signal: ${signal}`)
+      logger.info(`Starting a new worker`)
+      cluster.fork()
+    })
+
+  if (env === 'development') {
+    numWorkers = 1
+  }
+
+  for (let i = 0; i < numWorkers; i++) {
+    cluster.fork()
+  }
+
+} else {
+  process.title = 'health-refined-api-worker'
+
+  let port = process.env.PORT || 3000
+
+  let app = require('./../lib/api/api')
+  app.set('port', port)
+
+  let server = http.createServer(app)
+    .listen(port)
+    .on('error', (error) => {
+      if (error.syscall !== 'listen') {
+        throw error
+      }
+
+      let bind = typeof port === 'string' ? 'Pipe ' + port : 'Port ' + port
+
+      switch (error.code) {
+        case 'EACCES':
+          logger.error(bind + ' requires elevated privileges')
+          process.exit(1)
+          break
+        case 'EADDRINUSE':
+          logger.error(bind + ' is already in use')
+          process.exit(1)
+          break
+        default:
+          throw error
+      }
+    })
+    .on('listening', () => {
+      let addr = server.address()
+      let bind = typeof addr === 'string' ? 'pipe ' + addr : 'port ' + addr.port
+      logger.info('Listening on ' + bind)
+    })
+}
